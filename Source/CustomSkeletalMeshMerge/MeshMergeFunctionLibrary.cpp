@@ -49,6 +49,7 @@ USkeletalMesh* UMeshMergeFunctionLibrary::MergeMeshes(const FSkeletalMeshMergePa
 		{
 			Part.SkeletalMesh = Params.MeshesToMerge[i].SkeletalMesh;
 			Part.AttachedBoneName = Params.MeshesToMerge[i].AttachedBoneName;
+			Part.VerticesTransform = Params.MeshesToMerge[i].VerticesTransform;
 			MeshesToMergeCopy.Add(Part);
 		}
 	}

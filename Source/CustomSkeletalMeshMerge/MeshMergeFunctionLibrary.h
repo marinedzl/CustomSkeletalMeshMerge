@@ -14,6 +14,9 @@ struct FSkelMeshMergePart_BP
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Merge Params")
 	FName AttachedBoneName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Merge Params")
+	FTransform VerticesTransform;
 };
 
 USTRUCT(BlueprintType)
