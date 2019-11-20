@@ -1,5 +1,5 @@
 #include "MeshMergeFunctionLibrary.h"
-#include "SkeletalMeshMerge.h"
+#include "CustomSkeletalMeshMerge.h"
 #include "Engine/SkeletalMeshSocket.h"
 #include "Engine/SkeletalMesh.h"
 #include "Animation/Skeleton.h"
@@ -86,7 +86,7 @@ USkeletalMesh* UMeshMergeFunctionLibrary::MergeMeshes(const FSkeletalMeshMergePa
             }
         }
     }
-    FSkeletalMeshMerge Merger(BaseMesh, MeshesToMergeCopy, SectionMappings, Params.StripTopLODS, BufferAccess, UvTransforms.GetData());
+    FCustomSkeletalMeshMerge Merger(BaseMesh, MeshesToMergeCopy, SectionMappings, Params.StripTopLODS, BufferAccess, UvTransforms.GetData());
     if (!Merger.DoMerge())
     {
         UE_LOG(LogTemp, Warning, TEXT("Merge failed!"));
