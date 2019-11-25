@@ -144,7 +144,7 @@ private:
 
 	UMaterialInterface* BaseMaterial;
 
-	UMaterialInterface* MergedMaterial;
+	UMaterialInstanceDynamic* MergedMaterial;
 
 	/** Array of source skeletal meshes  */
 	TArray<USkeletalMesh*> SrcMeshList;

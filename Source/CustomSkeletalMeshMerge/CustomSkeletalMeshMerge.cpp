@@ -13,6 +13,10 @@
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "Rendering/SkeletalMeshLODRenderData.h"
 
+#include "ImageUtils.h"
+#include "FileHelper.h"
+#include "Materials/MaterialInstanceDynamic.h"
+
 #include "IMaterialBakingModule.h"
 #include "ModuleManager.h"
 #include "MaterialBakingStructures.h"
@@ -20,9 +24,6 @@
 #include "MaterialOptions.h"
 #include "MeshMergeModule.h"
 #include "MaterialBakingHelpers.h"
-#include "ImageUtils.h"
-#include "FileHelper.h"
-#include "Materials/MaterialInstanceConstant.h"
 
 /*-----------------------------------------------------------------------------
 	FCustomSkeletalMeshMerge
@@ -344,11 +345,10 @@ namespace
 	{
 		UTexture2D* Tex2D;
 
-		Tex2D = NewObject<UTexture2D>();
-		Tex2D->Source.Init(SrcWidth, SrcHeight, /*NumSlices=*/ 1, /*NumMips=*/ 1, TSF_BGRA8);
-
-		// Create base mip for the texture we created.
-		uint8* MipData = Tex2D->Source.LockMip(0);
+		Tex2D = UTexture2D::CreateTransient(SrcWidth, SrcHeight, PF_B8G8R8A8);
+		
+		FTexture2DMipMap& Mip = Tex2D->PlatformData->Mips[0];
+		uint8* MipData = (uint8*)Mip.BulkData.Lock(LOCK_READ_WRITE);
 		for (int32 y = 0; y < SrcHeight; y++)
 		{
 			uint8* DestPtr = &MipData[(SrcHeight - 1 - y) * SrcWidth * sizeof(FColor)];
@@ -369,32 +369,24 @@ namespace
 				SrcPtr++;
 			}
 		}
-		Tex2D->Source.UnlockMip(0);
-
-		// Set the Source Guid/Hash if specified
-		if (InParams.SourceGuidHash.IsValid())
-		{
-			Tex2D->Source.SetId(InParams.SourceGuidHash, true);
-		}
+		Mip.BulkData.Unlock();
 
 		// Set compression options.
 		Tex2D->SRGB = InParams.bSRGB;
 		Tex2D->CompressionSettings = InParams.CompressionSettings;
 		if (!InParams.bUseAlpha)
-		{
 			Tex2D->CompressionNoAlpha = true;
-		}
 		Tex2D->DeferCompression = InParams.bDeferCompression;
 
-		Tex2D->PostEditChange();
+		Tex2D->UpdateResource();
+
 		return Tex2D;
 	}
 
-	UMaterialInstanceConstant* CreateProxyMaterialInstance(UMaterialInterface* InBaseMaterial, FFlattenMaterial& FlattenMaterial)
+	UMaterialInstanceDynamic* CreateProxyMaterial(UMaterialInterface* InBaseMaterial, FFlattenMaterial& FlattenMaterial)
 	{
-		UMaterialInstanceConstant* OutMaterial = NewObject<UMaterialInstanceConstant>();
-		checkf(OutMaterial, TEXT("Failed to create instanced material"));
-		OutMaterial->Parent = InBaseMaterial;
+		UMaterialInstanceDynamic* OutMaterial = UMaterialInstanceDynamic::Create(InBaseMaterial, nullptr);
+		checkf(OutMaterial, TEXT("Failed to create material"));
 
 		{
 			FCreateTexture2DParameters TexParams;
@@ -407,8 +399,7 @@ namespace
 			UTexture2D* Texture = CreateTexture2D(TextureSize.X, TextureSize.Y, FlattenMaterial.GetPropertySamples(EFlattenMaterialProperties::Diffuse), TexParams);
 			checkf(Texture, TEXT("Failed to create texture"));
 
-			FMaterialParameterInfo ParameterInfo(TEXT("MainTexture"));
-			OutMaterial->SetTextureParameterValueEditorOnly(ParameterInfo, Texture);
+			OutMaterial->SetTextureParameterValue(TEXT("MainTexture"), Texture);
 		}
 
 		{
@@ -422,11 +413,8 @@ namespace
 			UTexture2D* Texture = CreateTexture2D(TextureSize.X, TextureSize.Y, FlattenMaterial.GetPropertySamples(EFlattenMaterialProperties::Normal), TexParams);
 			checkf(Texture, TEXT("Failed to create texture"));
 
-			FMaterialParameterInfo ParameterInfo(TEXT("NormalMap"));
-			OutMaterial->SetTextureParameterValueEditorOnly(ParameterInfo, Texture);
+			OutMaterial->SetTextureParameterValue(TEXT("NormalMap"), Texture);
 		}
-
-		OutMaterial->PostEditChange();
 
 		return OutMaterial;
 	}
@@ -544,7 +532,7 @@ void FCustomSkeletalMeshMerge::MergeMaterial()
 	}
 #endif // WITH_EDITOR
 
-	MergedMaterial = CreateProxyMaterialInstance(BaseMaterial, OutMaterial);
+	MergedMaterial = CreateProxyMaterial(BaseMaterial, OutMaterial);
 
 	// Save UVTransforms and SetMaterial
 	UVTransformsPerMesh.AddDefaulted(SrcMeshList.Num());
