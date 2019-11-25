@@ -544,7 +544,7 @@ void FCustomSkeletalMeshMerge::MergeMaterial()
 	}
 #endif // WITH_EDITOR
 
-	UMaterialInstanceConstant* MaterialInstance = CreateProxyMaterialInstance(BaseMaterial, OutMaterial);
+	MergedMaterial = CreateProxyMaterialInstance(BaseMaterial, OutMaterial);
 
 	// Save UVTransforms and SetMaterial
 	UVTransformsPerMesh.AddDefaulted(SrcMeshList.Num());
@@ -557,7 +557,6 @@ void FCustomSkeletalMeshMerge::MergeMaterial()
 			const FUVOffsetScalePair& UVTransform = UVTransforms[MaterialDataIndex];
 			FTransform Transform = FTransform(FQuat::Identity, FVector(UVTransform.Key.X, UVTransform.Key.Y, 0), FVector(UVTransform.Value.X, UVTransform.Value.Y, 1));
 			UVTransformsPerMesh[MeshIdx].Add(Transform);
-			SrcMesh->Materials[MtlIdx].MaterialInterface = MaterialInstance;
 		}
 	}
 }
@@ -814,7 +813,6 @@ void FCustomSkeletalMeshMerge::GenerateNewSectionArray(TArray<FNewSectionInfo>& 
 				TArray<FBoneIndexType> DestChunkBoneMap;
 				BoneMapToNewRefSkel(Section.BoneMap, SrcMeshInfo[MeshIdx].SrcToDestRefSkeletonMap, DestChunkBoneMap);
 
-
 				// get the material for this section
 				int32 MaterialIndex = Section.MaterialIndex;
 				// use the remapping of material indices for all LODs besides the base LOD 
@@ -832,8 +830,10 @@ void FCustomSkeletalMeshMerge::GenerateNewSectionArray(TArray<FNewSectionInfo>& 
 				{
 					FNewSectionInfo& NewSectionInfo = NewSectionArray[Idx];
 					// check for a matching material or a matching material index id if it is valid
+					/* hack
 					if ((MaterialId == -1 && Material == NewSectionInfo.Material) ||
 						(MaterialId != -1 && MaterialId == NewSectionInfo.MaterialId))
+						*/
 					{
 						check(NewSectionInfo.MergeSections.Num());
 
@@ -878,7 +878,10 @@ void FCustomSkeletalMeshMerge::GenerateNewSectionArray(TArray<FNewSectionInfo>& 
 				{
 					// create a new section entry
 					const FMeshUVChannelInfo& UVChannelData = SrcMesh->Materials[MaterialIndex].UVChannelData;
+					/* hack
 					FNewSectionInfo& NewSectionInfo = *new(NewSectionArray) FNewSectionInfo(Material, MaterialId, UVChannelData);
+					*/
+					FNewSectionInfo& NewSectionInfo = *new(NewSectionArray) FNewSectionInfo(MergedMaterial, MaterialId, UVChannelData);
 					// initialize the merged bonemap to simply use the original chunk bonemap
 					NewSectionInfo.MergedBoneMap = DestChunkBoneMap;
 
