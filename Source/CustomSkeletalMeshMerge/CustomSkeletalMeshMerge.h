@@ -92,15 +92,6 @@ struct FSkelMeshMergeSectionMapping
 };
 
 /**
-* Info to map all the sections about how to transform their UVs
-*/
-struct FSkelMeshMergeUVTransforms
-{
-	/** For each UV channel on each mesh, how the UVS should be transformed. */
-	TArray<TArray<FTransform>> UVTransformsPerMesh;
-};
-
-/**
 * Utility for merging a list of skeletal meshes into a single mesh.
 */
 class TESTACTION_API FCustomSkeletalMeshMerge
@@ -117,11 +108,11 @@ public:
 	*/
 	FCustomSkeletalMeshMerge(
 		USkeletalMesh* InMergeMesh,
+		UMaterialInterface* InBaseMaterial,
 		const TArray<FSkelMeshMergePart>& InSrcMeshList,
 		const TArray<FSkelMeshMergeSectionMapping>& InForceSectionMapping,
 		int32 StripTopLODs,
-		EMeshBufferAccess MeshBufferAccess = EMeshBufferAccess::Default,
-		FSkelMeshMergeUVTransforms* InSectionUVTransforms = nullptr
+		EMeshBufferAccess MeshBufferAccess = EMeshBufferAccess::Default
 	);
 
 	/**
@@ -130,6 +121,8 @@ public:
 	 * @return true if succeeded
 	 */
 	bool DoMerge(TArray<FRefPoseOverride>* RefPoseOverrides = nullptr);
+
+	void MergeMaterial();
 
 	/**
 	 * Create the 'MergedMesh' reference skeleton from the skeletons in the 'SrcMeshList'.
@@ -148,6 +141,8 @@ public:
 private:
 	/** Destination merged mesh */
 	USkeletalMesh* MergeMesh;
+
+	UMaterialInterface* BaseMaterial;
 
 	/** Array of source skeletal meshes  */
 	TArray<USkeletalMesh*> SrcMeshList;
@@ -179,7 +174,7 @@ private:
 	const TArray<FSkelMeshMergeSectionMapping>& ForceSectionMapping;
 
 	/** optional array to transform UVs in each source mesh */
-	const FSkelMeshMergeUVTransforms* SectionUVTransforms;
+	TArray<TArray<FTransform>> UVTransformsPerMesh;
 
 	/** Matches the Materials array in the final mesh - used for creating the right number of Material slots. */
 	TArray<int32>	MaterialIds;

@@ -13,10 +13,30 @@
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "Rendering/SkeletalMeshLODRenderData.h"
 
+#include "IMaterialBakingModule.h"
+#include "ModuleManager.h"
+#include "MaterialBakingStructures.h"
+#include "MaterialUtilities/Public/MaterialUtilities.h"
+#include "MaterialOptions.h"
+#include "MeshMergeModule.h"
+#include "MaterialBakingHelpers.h"
+#include "ImageUtils.h"
+#include "FileHelper.h"
+#include "Materials/MaterialInstanceConstant.h"
+
 /*-----------------------------------------------------------------------------
 	FCustomSkeletalMeshMerge
 -----------------------------------------------------------------------------*/
 #pragma optimize("", off)
+
+static TAutoConsoleVariable<int32> CVarSaveIntermediateTextures(
+	TEXT("SkeletalMeshMerge.SaveIntermediateTextures"),
+	0,
+	TEXT("Determines whether or not to save out intermediate BMP images for each flattened material property.\n")
+	TEXT("0: Turned Off\n")
+	TEXT("1: Turned On"),
+	ECVF_Default);
+
 /**
 * Constructor
 * @param InMergeMesh - destination mesh to merge to
@@ -24,16 +44,16 @@
 * @param InForceSectionMapping - optional array to map sections from the source meshes to merged section entries
 */
 FCustomSkeletalMeshMerge::FCustomSkeletalMeshMerge(USkeletalMesh* InMergeMesh,
+	UMaterialInterface* InBaseMaterial,
 	const TArray<FSkelMeshMergePart>& InSrcMeshList,
 	const TArray<FSkelMeshMergeSectionMapping>& InForceSectionMapping,
 	int32 InStripTopLODs,
-	EMeshBufferAccess InMeshBufferAccess,
-	FSkelMeshMergeUVTransforms* InSectionUVTransforms)
+	EMeshBufferAccess InMeshBufferAccess)
 	: MergeMesh(InMergeMesh)
+	, BaseMaterial(InBaseMaterial)
 	, StripTopLODs(InStripTopLODs)
 	, MeshBufferAccess(InMeshBufferAccess)
 	, ForceSectionMapping(InForceSectionMapping)
-	, SectionUVTransforms(InSectionUVTransforms)
 {
 	check(MergeMesh);
 
@@ -75,9 +95,471 @@ FCustomSkeletalMeshMerge::FCustomSkeletalMeshMerge(USkeletalMesh* InMergeMesh,
 */
 bool FCustomSkeletalMeshMerge::DoMerge(TArray<FRefPoseOverride>* RefPoseOverrides /* = nullptr */)
 {
+	MergeMaterial();
 	MergeSkeleton(RefPoseOverrides);
 
 	return FinalizeMesh();
+}
+
+namespace
+{
+	EFlattenMaterialProperties NewToOldProperty(int32 NewProperty)
+	{
+		const EFlattenMaterialProperties Remap[MP_Refraction] =
+		{
+			EFlattenMaterialProperties::Emissive,
+			EFlattenMaterialProperties::Opacity,
+			EFlattenMaterialProperties::OpacityMask,
+			EFlattenMaterialProperties::NumFlattenMaterialProperties,
+			EFlattenMaterialProperties::NumFlattenMaterialProperties,
+			EFlattenMaterialProperties::Diffuse,
+			EFlattenMaterialProperties::Metallic,
+			EFlattenMaterialProperties::Specular,
+			EFlattenMaterialProperties::Roughness,
+			EFlattenMaterialProperties::Normal,
+			EFlattenMaterialProperties::NumFlattenMaterialProperties,
+			EFlattenMaterialProperties::NumFlattenMaterialProperties,
+			EFlattenMaterialProperties::NumFlattenMaterialProperties,
+			EFlattenMaterialProperties::NumFlattenMaterialProperties,
+			EFlattenMaterialProperties::NumFlattenMaterialProperties,
+			EFlattenMaterialProperties::NumFlattenMaterialProperties,
+			EFlattenMaterialProperties::AmbientOcclusion
+		};
+
+		return Remap[NewProperty];
+	}
+
+	void PopulatePropertyEntry(EMaterialProperty MaterialProperty, const FIntPoint FullRes, FPropertyEntry& InOutPropertyEntry)
+	{
+		InOutPropertyEntry.Property = MaterialProperty;
+
+		const FIntPoint HalfRes = FIntPoint(FMath::Max(8, FullRes.X >> 1), FMath::Max(8, FullRes.Y >> 1));
+		const FIntPoint QuarterRes = FIntPoint(FMath::Max(4, FullRes.X >> 2), FMath::Max(4, FullRes.Y >> 2));
+
+		InOutPropertyEntry.bUseCustomSize = true;
+		InOutPropertyEntry.CustomSize = [FullRes, HalfRes, QuarterRes, MaterialProperty]() -> FIntPoint
+		{
+			switch (MaterialProperty)
+			{
+			case MP_Normal: return FullRes;
+			case MP_BaseColor: return HalfRes;
+			case MP_Specular: return QuarterRes;
+			case MP_Roughness: return QuarterRes;
+			case MP_Metallic: return QuarterRes;
+			case MP_Opacity: return QuarterRes;
+			case MP_OpacityMask: return QuarterRes;
+			case MP_EmissiveColor: return QuarterRes;
+			case MP_AmbientOcclusion: return QuarterRes;
+			default:
+			{
+				checkf(false, TEXT("Invalid Material Property"));
+				return FIntPoint();
+			}
+			}
+		}();
+	}
+
+	UMaterialOptions* PopulateMaterialOptions(FIntPoint TextureSize)
+	{
+		UMaterialOptions* MaterialOptions = DuplicateObject(GetMutableDefault<UMaterialOptions>(), GetTransientPackage());
+		MaterialOptions->Properties.Empty();
+		MaterialOptions->TextureSize = TextureSize;
+
+		FPropertyEntry Property;
+
+		PopulatePropertyEntry(MP_BaseColor, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+
+		PopulatePropertyEntry(MP_Normal, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+
+		/*
+		PopulatePropertyEntry(MP_Specular, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+
+		PopulatePropertyEntry(MP_Roughness, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+
+		PopulatePropertyEntry(MP_Metallic, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+
+		PopulatePropertyEntry(MP_Opacity, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+
+		PopulatePropertyEntry(MP_OpacityMask, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+
+		PopulatePropertyEntry(MP_EmissiveColor, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+
+		PopulatePropertyEntry(MP_AmbientOcclusion, TextureSize, Property);
+		MaterialOptions->Properties.Add(Property);
+		*/
+
+		return MaterialOptions;
+	}
+
+	FIntPoint ConditionalImageResize(const FIntPoint& SrcSize, const FIntPoint& DesiredSize, TArray<FColor>& InOutImage, bool bLinearSpace)
+	{
+		const int32 NumDesiredSamples = DesiredSize.X*DesiredSize.Y;
+		if (InOutImage.Num() && InOutImage.Num() != NumDesiredSamples)
+		{
+			check(InOutImage.Num() == SrcSize.X*SrcSize.Y);
+			TArray<FColor> OutImage;
+			if (NumDesiredSamples > 0)
+			{
+				FImageUtils::ImageResize(SrcSize.X, SrcSize.Y, InOutImage, DesiredSize.X, DesiredSize.Y, OutImage, bLinearSpace);
+			}
+			Exchange(InOutImage, OutImage);
+			return DesiredSize;
+		}
+
+		return SrcSize;
+	}
+
+	void CopyTextureRect(const FColor* Src, const FIntPoint& SrcSize, FColor* Dst, const FIntPoint& DstSize, const FIntPoint& DstPos, bool bCopyOnlyMaskedPixels)
+	{
+		const int32 RowLength = SrcSize.X * sizeof(FColor);
+		FColor* RowDst = Dst + DstSize.X*DstPos.Y;
+		const FColor* RowSrc = Src;
+		if (bCopyOnlyMaskedPixels)
+		{
+			for (int32 RowIdx = 0; RowIdx < SrcSize.Y; ++RowIdx)
+			{
+				for (int32 ColIdx = 0; ColIdx < SrcSize.X; ++ColIdx)
+				{
+					if (RowSrc[ColIdx] != FColor::Magenta)
+					{
+						RowDst[DstPos.X + ColIdx] = RowSrc[ColIdx];
+					}
+				}
+
+				RowDst += DstSize.X;
+				RowSrc += SrcSize.X;
+			}
+		}
+		else
+		{
+			for (int32 RowIdx = 0; RowIdx < SrcSize.Y; ++RowIdx)
+			{
+				FMemory::Memcpy(RowDst + DstPos.X, RowSrc, RowLength);
+				RowDst += DstSize.X;
+				RowSrc += SrcSize.X;
+			}
+		}
+	}
+
+	void FlattenBinnedMaterials(TArray<struct FFlattenMaterial>& InMaterialList, const TArray<FBox2D>& InMaterialBoxes, int32 InGutter, bool bCopyOnlyMaskedPixels, FFlattenMaterial& OutMergedMaterial, TArray<FUVOffsetScalePair>& OutUVTransforms)
+	{
+		OutUVTransforms.AddZeroed(InMaterialList.Num());
+		// Flatten emissive scale across all incoming materials
+		//OutMergedMaterial.EmissiveScale = FlattenEmissivescale(InMaterialList);
+
+		// Merge all material properties
+		for (int32 Index = 0; Index < (int32)EFlattenMaterialProperties::NumFlattenMaterialProperties; ++Index)
+		{
+			const EFlattenMaterialProperties Property = (EFlattenMaterialProperties)Index;
+			const FIntPoint& OutTextureSize = OutMergedMaterial.GetPropertySize(Property);
+			if (OutTextureSize != FIntPoint::ZeroValue)
+			{
+				TArray<FColor>& OutSamples = OutMergedMaterial.GetPropertySamples(Property);
+				OutSamples.Reserve(OutTextureSize.X * OutTextureSize.Y);
+				OutSamples.SetNumUninitialized(OutTextureSize.X * OutTextureSize.Y);
+
+				// Fill with magenta (as we will be box blurring this later)
+				for (FColor& SampleColor : OutSamples)
+				{
+					SampleColor = FColor(255, 0, 255);
+				}
+
+				FVector2D Gutter2D((float)InGutter, (float)InGutter);
+				bool bMaterialsWritten = false;
+				for (int32 MaterialIndex = 0; MaterialIndex < InMaterialList.Num(); ++MaterialIndex)
+				{
+					// Determine output size and offset
+					FFlattenMaterial& FlatMaterial = InMaterialList[MaterialIndex];
+					OutMergedMaterial.bDitheredLODTransition |= FlatMaterial.bDitheredLODTransition;
+					OutMergedMaterial.bTwoSided |= FlatMaterial.bTwoSided;
+
+					if (FlatMaterial.DoesPropertyContainData(Property))
+					{
+						const FBox2D MaterialBox = InMaterialBoxes[MaterialIndex];
+						const FIntPoint& InputSize = FlatMaterial.GetPropertySize(Property);
+						TArray<FColor>& InputSamples = FlatMaterial.GetPropertySamples(Property);
+
+						// Resize material to match output (area) size
+						FIntPoint OutputSize = FIntPoint((OutTextureSize.X * MaterialBox.GetSize().X) - (InGutter * 2), (OutTextureSize.Y * MaterialBox.GetSize().Y) - (InGutter * 2));
+						ConditionalImageResize(InputSize, OutputSize, InputSamples, false);
+
+						// Copy material data to the merged 'atlas' texture
+						FIntPoint OutputPosition = FIntPoint((OutTextureSize.X * MaterialBox.Min.X) + InGutter, (OutTextureSize.Y * MaterialBox.Min.Y) + InGutter);
+						CopyTextureRect(InputSamples.GetData(), OutputSize, OutSamples.GetData(), OutTextureSize, OutputPosition, bCopyOnlyMaskedPixels);
+
+						// Set the UV tranforms only once
+						if (Index == 0)
+						{
+							FUVOffsetScalePair& UVTransform = OutUVTransforms[MaterialIndex];
+							UVTransform.Key = MaterialBox.Min + (Gutter2D / FVector2D(OutTextureSize));
+							UVTransform.Value = MaterialBox.GetSize() - ((Gutter2D * 2.0f) / FVector2D(OutTextureSize));
+						}
+
+						bMaterialsWritten = true;
+					}
+				}
+
+				if (!bMaterialsWritten)
+				{
+					OutSamples.Empty();
+					OutMergedMaterial.SetPropertySize(Property, FIntPoint(0, 0));
+				}
+				else
+				{
+					// Smear borders
+					const FIntPoint PropertySize = OutMergedMaterial.GetPropertySize(Property);
+					FMaterialBakingHelpers::PerformUVBorderSmear(OutSamples, PropertySize.X, PropertySize.Y);
+				}
+			}
+		}
+	}
+
+#if WITH_EDITOR
+	void SaveIntermediateTextures(const FString Name, const FFlattenMaterial& Material)
+	{
+		for (int32 Index = 0; Index < (int32)EFlattenMaterialProperties::NumFlattenMaterialProperties; ++Index)
+		{
+			const EFlattenMaterialProperties Property = (EFlattenMaterialProperties)Index;
+			if (Material.DoesPropertyContainData(Property))
+			{
+				const UEnum* PropertyEnum = StaticEnum<EFlattenMaterialProperties>();
+				const FString PropertyName = PropertyEnum->GetNameStringByValue((int64)Property);
+				const FString DirectoryPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir() + TEXT("MaterialBaking/"));
+				FString FilenameString = FString::Printf(TEXT("%s%s-%s.bmp"), *DirectoryPath, *Name, *PropertyName);
+				FFileHelper::CreateBitmap(*FilenameString, Material.GetPropertySize(Property).X, Material.GetPropertySize(Property).Y, Material.GetPropertySamples(Property).GetData());
+			}
+		}
+	}
+#endif // WITH_EDITOR
+
+	UTexture2D* CreateTexture2D(int32 SrcWidth, int32 SrcHeight, const TArray<FColor> &SrcData, const FCreateTexture2DParameters& InParams)
+	{
+		UTexture2D* Tex2D;
+
+		Tex2D = NewObject<UTexture2D>();
+		Tex2D->Source.Init(SrcWidth, SrcHeight, /*NumSlices=*/ 1, /*NumMips=*/ 1, TSF_BGRA8);
+
+		// Create base mip for the texture we created.
+		uint8* MipData = Tex2D->Source.LockMip(0);
+		for (int32 y = 0; y < SrcHeight; y++)
+		{
+			uint8* DestPtr = &MipData[(SrcHeight - 1 - y) * SrcWidth * sizeof(FColor)];
+			FColor* SrcPtr = const_cast<FColor*>(&SrcData[(SrcHeight - 1 - y) * SrcWidth]);
+			for (int32 x = 0; x < SrcWidth; x++)
+			{
+				*DestPtr++ = SrcPtr->B;
+				*DestPtr++ = SrcPtr->G;
+				*DestPtr++ = SrcPtr->R;
+				if (InParams.bUseAlpha)
+				{
+					*DestPtr++ = SrcPtr->A;
+				}
+				else
+				{
+					*DestPtr++ = 0xFF;
+				}
+				SrcPtr++;
+			}
+		}
+		Tex2D->Source.UnlockMip(0);
+
+		// Set the Source Guid/Hash if specified
+		if (InParams.SourceGuidHash.IsValid())
+		{
+			Tex2D->Source.SetId(InParams.SourceGuidHash, true);
+		}
+
+		// Set compression options.
+		Tex2D->SRGB = InParams.bSRGB;
+		Tex2D->CompressionSettings = InParams.CompressionSettings;
+		if (!InParams.bUseAlpha)
+		{
+			Tex2D->CompressionNoAlpha = true;
+		}
+		Tex2D->DeferCompression = InParams.bDeferCompression;
+
+		Tex2D->PostEditChange();
+		return Tex2D;
+	}
+
+	UMaterialInstanceConstant* CreateProxyMaterialInstance(UMaterialInterface* InBaseMaterial, FFlattenMaterial& FlattenMaterial)
+	{
+		UMaterialInstanceConstant* OutMaterial = NewObject<UMaterialInstanceConstant>();
+		checkf(OutMaterial, TEXT("Failed to create instanced material"));
+		OutMaterial->Parent = InBaseMaterial;
+
+		{
+			FCreateTexture2DParameters TexParams;
+			TexParams.bUseAlpha = false;
+			TexParams.CompressionSettings = TextureCompressionSettings::TC_Default;
+			TexParams.bDeferCompression = true;
+			TexParams.bSRGB = true;
+
+			FIntPoint TextureSize = FlattenMaterial.GetPropertySize(EFlattenMaterialProperties::Diffuse);
+			UTexture2D* Texture = CreateTexture2D(TextureSize.X, TextureSize.Y, FlattenMaterial.GetPropertySamples(EFlattenMaterialProperties::Diffuse), TexParams);
+			checkf(Texture, TEXT("Failed to create texture"));
+
+			FMaterialParameterInfo ParameterInfo(TEXT("MainTexture"));
+			OutMaterial->SetTextureParameterValueEditorOnly(ParameterInfo, Texture);
+		}
+
+		{
+			FCreateTexture2DParameters TexParams;
+			TexParams.bUseAlpha = false;
+			TexParams.CompressionSettings = TextureCompressionSettings::TC_Default;
+			TexParams.bDeferCompression = true;
+			TexParams.bSRGB = false;
+
+			FIntPoint TextureSize = FlattenMaterial.GetPropertySize(EFlattenMaterialProperties::Normal);
+			UTexture2D* Texture = CreateTexture2D(TextureSize.X, TextureSize.Y, FlattenMaterial.GetPropertySamples(EFlattenMaterialProperties::Normal), TexParams);
+			checkf(Texture, TEXT("Failed to create texture"));
+
+			FMaterialParameterInfo ParameterInfo(TEXT("NormalMap"));
+			OutMaterial->SetTextureParameterValueEditorOnly(ParameterInfo, Texture);
+		}
+
+		OutMaterial->PostEditChange();
+
+		return OutMaterial;
+	}
+}
+
+typedef TPair<int32, int32> FMeshSectionKey;
+
+void FCustomSkeletalMeshMerge::MergeMaterial()
+{
+	FIntPoint TextureSize(512, 512);
+
+	UMaterialOptions* MaterialOptions = PopulateMaterialOptions(TextureSize); // 自动优化纹理大小尺寸，后面可改成读取配置
+
+	TArray<FMaterialData*> MaterialSettings; // 为BakeMaterials准备的数据
+	TArray<FMeshData*> MeshSettings; // 为BakeMaterials准备的数据，为了BakeMaterials接口兼容创建的数据，请勿使用
+
+	TMap<FMeshSectionKey, int32> MeshSectionToMaterialDataMap;
+
+	TArray<float> SectionMaterialImportanceValues;
+
+	TMap<EMaterialProperty, FIntPoint> PropertySizes; // 为BakeMaterials准备的数据
+	for (const FPropertyEntry& Entry : MaterialOptions->Properties)
+	{
+		if (!Entry.bUseConstantValue && Entry.Property != MP_MAX)
+		{
+			//PropertySizes.Add(Entry.Property, Entry.bUseCustomSize ? Entry.CustomSize : MaterialOptions->TextureSize);
+			PropertySizes.Add(Entry.Property, TextureSize);
+		}
+	}
+
+	for (int32 MeshIdx = 0; MeshIdx < SrcMeshList.Num(); MeshIdx++)
+	{
+		USkeletalMesh* SrcMesh = SrcMeshList[MeshIdx];
+
+		for (int32 MtlIdx = 0; MtlIdx < SrcMesh->Materials.Num(); MtlIdx++)
+		{
+			FSkeletalMaterial& Material = SrcMesh->Materials[MtlIdx];
+
+			FMaterialData* MaterialData = new FMaterialData();
+			MaterialData->Material = Material.MaterialInterface;
+			MaterialData->PropertySizes = PropertySizes;
+			MaterialSettings.Add(MaterialData);
+
+			MeshSectionToMaterialDataMap.Add(FMeshSectionKey(MeshIdx, MtlIdx), MaterialSettings.Num() - 1);
+
+			FMeshData* MeshData = new FMeshData();
+			MeshData->TextureCoordinateBox = FBox2D(FVector2D(0.0f, 0.0f), FVector2D(1.0f, 1.0f));
+			MeshSettings.Add(MeshData);
+
+			SectionMaterialImportanceValues.Add(1);
+		}
+	}
+
+	TArray<FBakeOutput> BakeOutputs;
+	IMaterialBakingModule& Module = FModuleManager::Get().LoadModuleChecked<IMaterialBakingModule>("MaterialBaking");
+	Module.BakeMaterials(MaterialSettings, MeshSettings, BakeOutputs);
+
+	TArray<FFlattenMaterial> FlattenedMaterials;
+	//ConvertOutputToFlatMaterials(BakeOutputs, GlobalMaterialSettings, FlattenedMaterials);
+	{
+		for (int32 OutputIndex = 0; OutputIndex < BakeOutputs.Num(); ++OutputIndex)
+		{
+			const FBakeOutput& Output = BakeOutputs[OutputIndex];
+			const FMaterialData& MaterialInfo = *MaterialSettings[OutputIndex];
+
+			FFlattenMaterial Material;
+
+			for (TPair<EMaterialProperty, FIntPoint> SizePair : Output.PropertySizes)
+			{
+				EFlattenMaterialProperties OldProperty = NewToOldProperty(SizePair.Key);
+				Material.SetPropertySize(OldProperty, SizePair.Value);
+				Material.GetPropertySamples(OldProperty).Append(Output.PropertyData[SizePair.Key]);
+			}
+
+			Material.bDitheredLODTransition = MaterialInfo.Material->IsDitheredLODTransition();
+			Material.BlendMode = BLEND_Opaque;
+			Material.bTwoSided = MaterialInfo.Material->IsTwoSided();
+			Material.EmissiveScale = Output.EmissiveScale;
+
+			FlattenedMaterials.Add(Material);
+
+#if WITH_EDITOR
+			const bool bSaveIntermediateTextures = CVarSaveIntermediateTextures.GetValueOnAnyThread() == 1;
+			if (bSaveIntermediateTextures)
+			{
+				SaveIntermediateTextures(MaterialInfo.Material->GetName(), Material);
+			}
+#endif // WITH_EDITOR
+		}
+	}
+
+	FlattenedMaterials.Num();
+
+	FFlattenMaterial OutMaterial;
+	for (const FPropertyEntry& Entry : MaterialOptions->Properties)
+	{
+		if (Entry.Property != MP_MAX)
+		{
+			EFlattenMaterialProperties OldProperty = NewToOldProperty(Entry.Property);
+			//OutMaterial.SetPropertySize(OldProperty, (Entry.bUseCustomSize ? Entry.CustomSize : MaterialOptions->TextureSize) * 4);
+			OutMaterial.SetPropertySize(OldProperty, FIntPoint(1024, 1024));
+		}
+	}
+
+	TArray<FUVOffsetScalePair> UVTransforms;
+	TArray<FBox2D> MaterialBoxes;
+	FMaterialUtilities::GeneratedBinnedTextureSquares(FVector2D(1.0f, 1.0f), SectionMaterialImportanceValues, MaterialBoxes);
+	FlattenBinnedMaterials(FlattenedMaterials, MaterialBoxes, 0, true, OutMaterial, UVTransforms);
+
+#if WITH_EDITOR
+	const bool bSaveIntermediateTextures = CVarSaveIntermediateTextures.GetValueOnAnyThread() == 1;
+	if (bSaveIntermediateTextures)
+	{
+		SaveIntermediateTextures(TEXT("MergeMaterial"), OutMaterial);
+	}
+#endif // WITH_EDITOR
+
+	UMaterialInstanceConstant* MaterialInstance = CreateProxyMaterialInstance(BaseMaterial, OutMaterial);
+
+	// Save UVTransforms and SetMaterial
+	UVTransformsPerMesh.AddDefaulted(SrcMeshList.Num());
+	for (int32 MeshIdx = 0; MeshIdx < SrcMeshList.Num(); MeshIdx++)
+	{
+		USkeletalMesh* SrcMesh = SrcMeshList[MeshIdx];
+		for (int32 MtlIdx = 0; MtlIdx < SrcMesh->Materials.Num(); MtlIdx++)
+		{
+			int MaterialDataIndex = *MeshSectionToMaterialDataMap.Find(FMeshSectionKey(MeshIdx, MtlIdx));
+			const FUVOffsetScalePair& UVTransform = UVTransforms[MaterialDataIndex];
+			FTransform Transform = FTransform(FQuat::Identity, FVector(UVTransform.Key.X, UVTransform.Key.Y, 0), FVector(UVTransform.Value.X, UVTransform.Value.Y, 1));
+			UVTransformsPerMesh[MeshIdx].Add(Transform);
+			SrcMesh->Materials[MtlIdx].MaterialInterface = MaterialInstance;
+		}
+	}
 }
 
 void FCustomSkeletalMeshMerge::MergeSkeleton(const TArray<FRefPoseOverride>* RefPoseOverrides /* = nullptr */)
@@ -364,9 +846,9 @@ void FCustomSkeletalMeshMerge::GenerateNewSectionArray(TArray<FNewSectionInfo>& 
 						if (TempMergedBoneMap.Num() <= MaxGPUSkinBones)
 						{
 							TArray<FTransform> SrcUVTransform;
-							if (SectionUVTransforms != nullptr && MeshIdx < SectionUVTransforms->UVTransformsPerMesh.Num())
+							if (MeshIdx < UVTransformsPerMesh.Num())
 							{
-								SrcUVTransform = SectionUVTransforms->UVTransformsPerMesh[MeshIdx];
+								SrcUVTransform = UVTransformsPerMesh[MeshIdx];
 							}
 
 							// add the source section as a new merge entry
@@ -401,9 +883,9 @@ void FCustomSkeletalMeshMerge::GenerateNewSectionArray(TArray<FNewSectionInfo>& 
 					NewSectionInfo.MergedBoneMap = DestChunkBoneMap;
 
 					TArray<FTransform> SrcUVTransform;
-					if (SectionUVTransforms != nullptr && MeshIdx < SectionUVTransforms->UVTransformsPerMesh.Num())
+					if (MeshIdx < UVTransformsPerMesh.Num())
 					{
-						SrcUVTransform = SectionUVTransforms->UVTransformsPerMesh[MeshIdx];
+						SrcUVTransform = UVTransformsPerMesh[MeshIdx];
 					}
 					// add a new merge section entry
 					FMergeSectionInfo& MergeSectionInfo = *new(NewSectionInfo.MergeSections) FMergeSectionInfo(

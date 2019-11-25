@@ -29,26 +29,6 @@ struct TESTACTION_API FSkelMeshMergeSectionMapping_BP
 	TArray<int32> SectionIDs;
 };
 
-USTRUCT(BlueprintType)
-struct TESTACTION_API FSkelMeshMergeUVTransform
-{
-	GENERATED_BODY()
-
-	/** A list of how UVs should be transformed on a given mesh, where index represents a specific UV channel. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Merge Params")
-	TArray<FTransform> UVTransforms;
-};
-
-USTRUCT(BlueprintType)
-struct TESTACTION_API FSkelMeshMergeUVTransformMapping
-{
-	GENERATED_BODY()
-
-	/** For each UV channel on each mesh, how the UVS should be transformed. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Merge Params")
-	TArray<FSkelMeshMergeUVTransform> UVTransformsPerMesh;
-};
-
 /**
 * Struct containing all parameters used to perform a Skeletal Mesh merge.
 */
@@ -68,10 +48,6 @@ struct TESTACTION_API FSkeletalMeshMergeParams
 	// An optional array to map sections from the source meshes to merged section entries
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TArray<FSkelMeshMergeSectionMapping_BP> MeshSectionMappings;
-
-	// An optional array to transform the UVs in each mesh
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	TArray<FSkelMeshMergeUVTransformMapping> UVTransformsPerMesh;
 
 	// The list of skeletal meshes to merge.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -94,6 +70,10 @@ struct TESTACTION_API FSkeletalMeshMergeParams
 	// Leave empty if the generated skeleton is OK.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	class USkeleton* Skeleton;
+
+	// Material that will be used for the merged mesh.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	class UMaterialInterface* BaseMaterial;
 };
 
 UCLASS()
