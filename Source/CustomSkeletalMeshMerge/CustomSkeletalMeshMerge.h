@@ -94,7 +94,7 @@ struct FSkelMeshMergeSectionMapping
 /**
 * Utility for merging a list of skeletal meshes into a single mesh.
 */
-class TESTACTION_API FCustomSkeletalMeshMerge
+class FCustomSkeletalMeshMerge
 {
 public:
 	/**
@@ -122,7 +122,7 @@ public:
 	 */
 	bool DoMerge(TArray<FRefPoseOverride>* RefPoseOverrides = nullptr);
 
-	void MergeMaterial();
+	void MergeMaterial(const FIntPoint& TextureSize);
 
 	/**
 	 * Create the 'MergedMesh' reference skeleton from the skeletons in the 'SrcMeshList'.
