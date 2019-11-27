@@ -13,7 +13,8 @@ class UCompositeTexture : public UCanvasRenderTarget2D
 	UFUNCTION()
 	void PerformMerge(UCanvas* Canvas, int32 Width, int32 Height);
 public:
-	static UCompositeTexture* Create(UObject* WorldContextObject, const FIntPoint& Size, const TArray<UTexture*>* Textures, const TArray<FBox2D>* Boxes);
+	static UCompositeTexture* Create(UObject* WorldContextObject, const FIntPoint& Size, bool bNormal,
+		const TArray<UTexture*>* Textures, const TArray<FBox2D>* Boxes);
 private:
 	const TArray<UTexture*>* Textures;
 	const TArray<FBox2D>* Boxes;

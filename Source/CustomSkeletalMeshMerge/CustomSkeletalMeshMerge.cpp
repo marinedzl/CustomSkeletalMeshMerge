@@ -243,12 +243,27 @@ namespace
 			Box = Texture.Area;
 		}
 	}
+
+#if WITH_EDITOR
+	void SaveIntermediateTextures(const FString Name, EMaterialProperty MaterialProperty, const FIntPoint& Size, const TArray<FColor>& Color)
+	{
+		for (int32 Index = 0; Index < (int32)EMaterialProperty::MP_MAX; ++Index)
+		{
+			const UEnum* PropertyEnum = StaticEnum<EMaterialProperty>();
+			const FString PropertyName = PropertyEnum->GetNameStringByValue((int64)MaterialProperty);
+			const FString DirectoryPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir() + TEXT("MaterialBaking/"));
+			FString FilenameString = FString::Printf(TEXT("%s%s-%s.bmp"), *DirectoryPath, *Name, *PropertyName);
+			FFileHelper::CreateBitmap(*FilenameString, Size.X, Size.Y, Color.GetData());
+		}
+	}
+#endif // WITH_EDITOR
 }
 
 const int MaterialPropertyCount = 2; // BaseColor, Normap
 const EMaterialProperty MaterialProperties[MaterialPropertyCount] = { MP_BaseColor, MP_Normal, };
 const FName MaterialPropertyTextureNames[MaterialPropertyCount] = { TEXT("MainTexture"), TEXT("NormalMap") };
 const FIntPoint MaterialPropertyTextureSize[MaterialPropertyCount] = { FIntPoint(1024, 1024), FIntPoint(512, 512), };
+const bool MaterialPropertyIsNormal[MaterialPropertyCount] = { false, true, };
 
 void FCustomSkeletalMeshMerge::MergeMaterial()
 {
@@ -316,8 +331,23 @@ void FCustomSkeletalMeshMerge::MergeMaterial()
 		}
 
 		// 合并纹理
-		UCompositeTexture* CompositeTexture = UCompositeTexture::Create(GEngine->GetWorld(), MaterialPropertyTextureSize[PropertyIndex], &Textures, &UVBoxes);
+		UCompositeTexture* CompositeTexture = UCompositeTexture::Create(GEngine->GetWorld(), 
+			MaterialPropertyTextureSize[PropertyIndex], MaterialPropertyIsNormal[PropertyIndex], &Textures, &UVBoxes);
 		MergedMaterial->SetTextureParameterValue(MaterialPropertyTextureNames[PropertyIndex], CompositeTexture);
+
+#if WITH_EDITOR
+		const bool bSaveIntermediateTextures = CVarSaveIntermediateTextures.GetValueOnAnyThread() == 1;
+		if (bSaveIntermediateTextures)
+		{
+			TArray<FColor> OutputColor;
+			const bool bNormalmap = MaterialPropertyIsNormal[PropertyIndex];
+			FReadSurfaceDataFlags ReadPixelFlags(bNormalmap ? RCM_SNorm : RCM_UNorm);
+			ReadPixelFlags.SetLinearToGamma(false);
+
+			CompositeTexture->GameThread_GetRenderTargetResource()->ReadPixels(OutputColor, ReadPixelFlags);
+			SaveIntermediateTextures(TEXT("MergeMaterial"), MaterialProperties[PropertyIndex], MaterialPropertyTextureSize[PropertyIndex], OutputColor);
+		}
+#endif // WITH_EDITOR
 	}
 
 	// 存储UVTransform，供MeshMerge使用

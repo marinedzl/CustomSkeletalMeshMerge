@@ -1,4 +1,5 @@
 #include "CompositeTexture.h"
+#include "Engine.h"
 #include "Classes/Engine/Canvas.h"
 
 #pragma optimize("", off)
@@ -29,17 +30,28 @@ void UCompositeTexture::PerformMerge(UCanvas* Canvas, int32 CanvasWidth, int32 C
 	}
 }
 
-UCompositeTexture* UCompositeTexture::Create(UObject* WorldContextObject, const FIntPoint& Size, 
+UCompositeTexture* UCompositeTexture::Create(UObject* WorldContextObject, const FIntPoint& Size, bool bNormal,
 	const TArray<UTexture*>* Textures, const TArray<FBox2D>* Boxes)
 {
 	if (Size.X == 0 || Size.Y == 0 || !Textures || !Boxes || Textures->Num() != Boxes->Num() || Textures->Num() < 0)
 		return nullptr;
 
-	UCompositeTexture* RenderTarget = Cast<UCompositeTexture>(UCanvasRenderTarget2D::CreateCanvasRenderTarget2D(WorldContextObject, UCompositeTexture::StaticClass(), Size.X, Size.Y));
+
+	UCompositeTexture* RenderTarget = NewObject<UCompositeTexture>(GetTransientPackage());
+	check(RenderTarget);
+
+	RenderTarget->World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
+	RenderTarget->bAutoGenerateMips = true;
+	RenderTarget->SizeX = Size.X;
+	RenderTarget->SizeY = Size.Y;
+	RenderTarget->OverrideFormat = bNormal ? PF_FloatRGBA : PF_B8G8R8A8;
+	RenderTarget->bForceLinearGamma = true;
+
 	RenderTarget->Textures = Textures;
 	RenderTarget->Boxes = Boxes;
 
 	RenderTarget->UpdateResource();
+
 	return RenderTarget;
 }
 #pragma optimize("", on)
