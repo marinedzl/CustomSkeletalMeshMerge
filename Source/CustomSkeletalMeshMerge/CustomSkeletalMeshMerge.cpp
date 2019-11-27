@@ -90,7 +90,7 @@ FCustomSkeletalMeshMerge::FCustomSkeletalMeshMerge(USkeletalMesh* InMergeMesh,
 */
 bool FCustomSkeletalMeshMerge::DoMerge(TArray<FRefPoseOverride>* RefPoseOverrides /* = nullptr */)
 {
-	MergeMaterial(FIntPoint(512, 512));
+	MergeMaterial();
 	MergeSkeleton(RefPoseOverrides);
 
 	return FinalizeMesh();
@@ -246,11 +246,11 @@ namespace
 }
 
 const int MaterialPropertyCount = 2; // BaseColor, Normap
-const EMaterialProperty MaterialProperties[2] = { MP_BaseColor, MP_Normal, };
-const FName MaterialPropertyTextureNames[2] = { TEXT("MainTexture"), TEXT("NormalMap") };
-const FIntPoint MaterialPropertyTextureSize[2] = { FIntPoint(512, 512), FIntPoint(512, 512), };
+const EMaterialProperty MaterialProperties[MaterialPropertyCount] = { MP_BaseColor, MP_Normal, };
+const FName MaterialPropertyTextureNames[MaterialPropertyCount] = { TEXT("MainTexture"), TEXT("NormalMap") };
+const FIntPoint MaterialPropertyTextureSize[MaterialPropertyCount] = { FIntPoint(1024, 1024), FIntPoint(512, 512), };
 
-void FCustomSkeletalMeshMerge::MergeMaterial(const FIntPoint& TextureSize)
+void FCustomSkeletalMeshMerge::MergeMaterial()
 {
 	typedef TPair<int32, int32> FMeshSectionKey; // MeshIdx, MtlIdx
 	TArray<UMaterialInterface*> MaterialList; // 材质队列
@@ -266,7 +266,32 @@ void FCustomSkeletalMeshMerge::MergeMaterial(const FIntPoint& TextureSize)
 			FSkeletalMaterial& Material = SrcMesh->Materials[MtlIdx];
 			MaterialList.Add(Material.MaterialInterface);
 			MeshSectionToMaterialList.Add(FMeshSectionKey(MeshIdx, MtlIdx), MaterialList.Num() - 1);
-			SectionMaterialImportanceValues.Add(1);
+
+			// 计算所占比例（根据纹理大小
+			UTexture* MainTexture = nullptr;
+			Material.MaterialInterface->GetTextureParameterValue(MaterialPropertyTextureNames[0], MainTexture);
+			UTexture2D* MainTexture2D = Cast<UTexture2D>(MainTexture);
+			if (MainTexture2D)
+				SectionMaterialImportanceValues.Add((float)MainTexture2D->GetSizeX() / MaterialPropertyTextureSize[0].X);
+			else
+				SectionMaterialImportanceValues.Add(1);
+
+			TArray<UTexture*> MaterialTextures;
+			Material.MaterialInterface->GetUsedTextures(MaterialTextures, EMaterialQualityLevel::Num, true, GMaxRHIFeatureLevel, true);
+
+			// Force load materials used by the current material
+			for (UTexture* Texture : MaterialTextures)
+			{
+				if (Texture != NULL)
+				{
+					UTexture2D* Texture2D = Cast<UTexture2D>(Texture);
+					if (Texture2D)
+					{
+						Texture2D->SetForceMipLevelsToBeResident(30.0f);
+						Texture2D->WaitForStreaming();
+					}
+				}
+			}
 		}
 	}
 

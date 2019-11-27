@@ -122,7 +122,7 @@ public:
 	 */
 	bool DoMerge(TArray<FRefPoseOverride>* RefPoseOverrides = nullptr);
 
-	void MergeMaterial(const FIntPoint& TextureSize);
+	void MergeMaterial();
 
 	/**
 	 * Create the 'MergedMesh' reference skeleton from the skeletons in the 'SrcMeshList'.
