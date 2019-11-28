@@ -41,11 +41,11 @@ UCompositeTexture* UCompositeTexture::Create(UObject* WorldContextObject, const 
 	check(RenderTarget);
 
 	RenderTarget->World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
-	RenderTarget->bAutoGenerateMips = true;
+	//RenderTarget->bAutoGenerateMips = true; // Generate Mipmaps unsupported on this OpenGL version
 	RenderTarget->SizeX = Size.X;
 	RenderTarget->SizeY = Size.Y;
-	RenderTarget->OverrideFormat = bNormal ? PF_FloatRGBA : PF_B8G8R8A8;
-	RenderTarget->bForceLinearGamma = true;
+	RenderTarget->OverrideFormat = PF_B8G8R8A8;
+	//RenderTarget->bForceLinearGamma = true;
 
 	RenderTarget->Textures = Textures;
 	RenderTarget->Boxes = Boxes;

@@ -262,7 +262,7 @@ namespace
 const int MaterialPropertyCount = 2; // BaseColor, Normap
 const EMaterialProperty MaterialProperties[MaterialPropertyCount] = { MP_BaseColor, MP_Normal, };
 const FName MaterialPropertyTextureNames[MaterialPropertyCount] = { TEXT("MainTexture"), TEXT("NormalMap") };
-const FIntPoint MaterialPropertyTextureSize[MaterialPropertyCount] = { FIntPoint(1024, 1024), FIntPoint(512, 512), };
+const FIntPoint MaterialPropertyTextureSize[MaterialPropertyCount] = { FIntPoint(1024, 1024), FIntPoint(1024, 1024), };
 const bool MaterialPropertyIsNormal[MaterialPropertyCount] = { false, true, };
 
 void FCustomSkeletalMeshMerge::MergeMaterial()
