@@ -16,7 +16,6 @@
 #include "ImageUtils.h"
 #include "FileHelper.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "CompositeTexture.h"
 #include "Engine.h"
 
 /*-----------------------------------------------------------------------------
@@ -98,7 +97,7 @@ bool FCustomSkeletalMeshMerge::DoMerge(TArray<FRefPoseOverride>* RefPoseOverride
 
 namespace
 {
-	void GeneratedBinnedTextureSquares(const FVector2D DestinationSize, TArray<float>& InTexureWeights, TArray<FBox2D>& OutGeneratedBoxes)
+	void GeneratedBinnedTextureSquares(const FVector2D DestinationSize, TArray<FVector2D>& InTexureSize, TArray<FBox2D>& OutGeneratedBoxes)
 	{
 		typedef FBox2D FTextureArea;
 		struct FWeightedTexture
@@ -111,14 +110,13 @@ namespace
 		TArray<FWeightedTexture> WeightedTextures;
 		const float TotalArea = DestinationSize.X * DestinationSize.Y;
 		// Generate textures with their size calculated according to their weight
-		for (int32 WeightIndex = 0; WeightIndex < InTexureWeights.Num(); ++WeightIndex)
+		for (int32 TextureIndex = 0; TextureIndex < InTexureSize.Num(); ++TextureIndex)
 		{
-			const float Weight = InTexureWeights[WeightIndex];
 			FWeightedTexture Texture;
-			float TextureSize = FMath::Sqrt(TotalArea*Weight);
-			Texture.Area = FTextureArea(FVector2D(0.0f, 0.0f), FVector2D(TextureSize, TextureSize));
-			Texture.TextureIndex = WeightIndex;
-			Texture.Weight = Weight;
+			const FVector2D& TextureSize = InTexureSize[TextureIndex];
+			Texture.Area = FTextureArea(FVector2D(0.0f, 0.0f), TextureSize);
+			Texture.TextureIndex = TextureIndex;
+			Texture.Weight = TextureSize.X / DestinationSize.X;
 			WeightedTextures.Add(Texture);
 		}
 
@@ -233,8 +231,8 @@ namespace
 		} while (!bSuccess);
 
 		// Now generate boxes
-		OutGeneratedBoxes.Empty(InTexureWeights.Num());
-		OutGeneratedBoxes.AddZeroed(InTexureWeights.Num());
+		OutGeneratedBoxes.Empty(InTexureSize.Num());
+		OutGeneratedBoxes.AddZeroed(InTexureSize.Num());
 
 		// Generate boxes according to the inserted textures
 		for (const FWeightedTexture& Texture : InsertedTextures)
@@ -244,19 +242,49 @@ namespace
 		}
 	}
 
-#if WITH_EDITOR
-	void SaveIntermediateTextures(const FString Name, EMaterialProperty MaterialProperty, const FIntPoint& Size, const TArray<FColor>& Color)
+	UTexture2D* CreateCompositeTexture(UObject* WorldContextObject, const FIntPoint& Size, bool bNormal,
+		const TArray<UTexture*>* Textures, const TArray<FBox2D>* Boxes)
 	{
-		for (int32 Index = 0; Index < (int32)EMaterialProperty::MP_MAX; ++Index)
+		if (Size.X == 0 || Size.Y == 0 || !Textures || !Boxes || Textures->Num() != Boxes->Num() || Textures->Num() < 0)
+			return nullptr;
+
+		UTexture2D* FirstTexture = Cast<UTexture2D>((*Textures)[0]);
+		check(FirstTexture);
+
+		UTexture2D* DestinationTexture = UTexture2D::CreateTransient(Size.X, Size.Y, FirstTexture->GetPixelFormat());
+		check(DestinationTexture);
+
+		DestinationTexture->UpdateResource();
+
+		for (int32 i = 0; i < Textures->Num(); i++)
 		{
-			const UEnum* PropertyEnum = StaticEnum<EMaterialProperty>();
-			const FString PropertyName = PropertyEnum->GetNameStringByValue((int64)MaterialProperty);
-			const FString DirectoryPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectIntermediateDir() + TEXT("MaterialBaking/"));
-			FString FilenameString = FString::Printf(TEXT("%s%s-%s.bmp"), *DirectoryPath, *Name, *PropertyName);
-			FFileHelper::CreateBitmap(*FilenameString, Size.X, Size.Y, Color.GetData());
+			const FBox2D& Box = (*Boxes)[i];
+			UTexture2D* SourceTexture = Cast<UTexture2D>((*Textures)[i]);
+			check(SourceTexture);
+
+			if (SourceTexture->GetPixelFormat() != DestinationTexture->GetPixelFormat())
+				continue;
+
+			ENQUEUE_RENDER_COMMAND(InitCommand)(
+				[SourceTexture, DestinationTexture, Box](FRHICommandListImmediate& RHICmdList)
+			{
+				FRHICopyTextureInfo CopyInfo;
+				CopyInfo.Size = FIntVector(SourceTexture->GetSizeX(), SourceTexture->GetSizeY(), 1);
+				CopyInfo.SourcePosition = FIntVector::ZeroValue;
+				CopyInfo.DestPosition = FIntVector(Box.Min.X, Box.Min.Y, 0);
+				CopyInfo.NumSlices = 1; // 1 for simple texture, 6 for cubemap
+				CopyInfo.NumMips = 1;
+
+				RHICmdList.CopyTexture(
+					SourceTexture->Resource->TextureRHI,
+					DestinationTexture->Resource->TextureRHI, CopyInfo);
+			});
 		}
+
+		FlushRenderingCommands();
+
+		return DestinationTexture;
 	}
-#endif // WITH_EDITOR
 }
 
 const int MaterialPropertyCount = 2; // BaseColor, Normap
@@ -265,12 +293,18 @@ const FName MaterialPropertyTextureNames[MaterialPropertyCount] = { TEXT("MainTe
 const FIntPoint MaterialPropertyTextureSize[MaterialPropertyCount] = { FIntPoint(1024, 1024), FIntPoint(1024, 1024), };
 const bool MaterialPropertyIsNormal[MaterialPropertyCount] = { false, true, };
 
+/*
+目前存在的限制：
+1）每个Tile纹理的格式必须一致
+2）每张Atlas纹理的尺寸必须一致（因为UV只有一套）
+*/
+
 void FCustomSkeletalMeshMerge::MergeMaterial()
 {
 	typedef TPair<int32, int32> FMeshSectionKey; // MeshIdx, MtlIdx
 	TArray<UMaterialInterface*> MaterialList; // 材质队列
 	TMap<FMeshSectionKey, int32> MeshSectionToMaterialList; // 通过MeshSection查找材质
-	TArray<float> SectionMaterialImportanceValues; // 材质的权重
+	TArray<FVector2D> TextureSize; // 材质的权重
 
 	// 收集所有材质
 	for (int32 MeshIdx = 0; MeshIdx < SrcMeshList.Num(); MeshIdx++)
@@ -286,10 +320,8 @@ void FCustomSkeletalMeshMerge::MergeMaterial()
 			UTexture* MainTexture = nullptr;
 			Material.MaterialInterface->GetTextureParameterValue(MaterialPropertyTextureNames[0], MainTexture);
 			UTexture2D* MainTexture2D = Cast<UTexture2D>(MainTexture);
-			if (MainTexture2D)
-				SectionMaterialImportanceValues.Add((float)MainTexture2D->GetSizeX() / MaterialPropertyTextureSize[0].X);
-			else
-				SectionMaterialImportanceValues.Add(1);
+			check(MainTexture2D);
+			TextureSize.Add(FVector2D(MainTexture2D->GetSizeX(), MainTexture2D->GetSizeY()));
 
 			TArray<UTexture*> MaterialTextures;
 			Material.MaterialInterface->GetUsedTextures(MaterialTextures, EMaterialQualityLevel::Num, true, GMaxRHIFeatureLevel, true);
@@ -312,7 +344,7 @@ void FCustomSkeletalMeshMerge::MergeMaterial()
 
 	// 分配纹理位置
 	TArray<FBox2D> UVBoxes;
-	GeneratedBinnedTextureSquares(FVector2D(1.0f, 1.0f), SectionMaterialImportanceValues, UVBoxes);
+	GeneratedBinnedTextureSquares(MaterialPropertyTextureSize[0], TextureSize, UVBoxes);
 
 	// 创建材质
 	MergedMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, nullptr);
@@ -331,23 +363,10 @@ void FCustomSkeletalMeshMerge::MergeMaterial()
 		}
 
 		// 合并纹理
-		UCompositeTexture* CompositeTexture = UCompositeTexture::Create(GEngine->GetWorld(), 
+		UTexture2D* CompositeTexture = CreateCompositeTexture(GEngine->GetWorld(),
 			MaterialPropertyTextureSize[PropertyIndex], MaterialPropertyIsNormal[PropertyIndex], &Textures, &UVBoxes);
+
 		MergedMaterial->SetTextureParameterValue(MaterialPropertyTextureNames[PropertyIndex], CompositeTexture);
-
-#if WITH_EDITOR
-		const bool bSaveIntermediateTextures = CVarSaveIntermediateTextures.GetValueOnAnyThread() == 1;
-		if (bSaveIntermediateTextures)
-		{
-			TArray<FColor> OutputColor;
-			const bool bNormalmap = MaterialPropertyIsNormal[PropertyIndex];
-			FReadSurfaceDataFlags ReadPixelFlags(bNormalmap ? RCM_SNorm : RCM_UNorm);
-			ReadPixelFlags.SetLinearToGamma(false);
-
-			CompositeTexture->GameThread_GetRenderTargetResource()->ReadPixels(OutputColor, ReadPixelFlags);
-			SaveIntermediateTextures(TEXT("MergeMaterial"), MaterialProperties[PropertyIndex], MaterialPropertyTextureSize[PropertyIndex], OutputColor);
-		}
-#endif // WITH_EDITOR
 	}
 
 	// 存储UVTransform，供MeshMerge使用
@@ -359,8 +378,8 @@ void FCustomSkeletalMeshMerge::MergeMaterial()
 		{
 			int MaterialDataIndex = *MeshSectionToMaterialList.Find(FMeshSectionKey(MeshIdx, MtlIdx));
 			const FBox2D& Box = UVBoxes[MaterialDataIndex];
-			const FVector2D Pos = Box.Min;
-			const FVector2D Size = Box.GetSize();
+			const FVector2D Pos = Box.Min / MaterialPropertyTextureSize[0];
+			const FVector2D Size = Box.GetSize() / MaterialPropertyTextureSize[0];
 			FTransform Transform = FTransform(FQuat::Identity, FVector(Pos.X, Pos.Y, 0), FVector(Size.X, Size.Y, 1));
 			UVTransformsPerMesh[MeshIdx].Add(Transform);
 		}
