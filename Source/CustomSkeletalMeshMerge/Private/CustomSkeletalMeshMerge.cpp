@@ -15,7 +15,6 @@
 
 #include "ImageUtils.h"
 #include "FileHelper.h"
-#include "Materials/MaterialInstanceDynamic.h"
 #include "Engine.h"
 
 /*-----------------------------------------------------------------------------

@@ -14,6 +14,7 @@ FCustomSkeletalMeshMerge
 #include "Engine/EngineTypes.h"
 #include "ReferenceSkeleton.h"
 #include "Components.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 class UMaterialInterface;
 class USkeletalMesh;
