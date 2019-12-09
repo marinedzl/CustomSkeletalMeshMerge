@@ -267,16 +267,26 @@ namespace
 			ENQUEUE_RENDER_COMMAND(InitCommand)(
 				[SourceTexture, DestinationTexture, Box](FRHICommandListImmediate& RHICmdList)
 			{
-				FRHICopyTextureInfo CopyInfo;
-				CopyInfo.Size = FIntVector(SourceTexture->GetSizeX(), SourceTexture->GetSizeY(), 1);
-				CopyInfo.SourcePosition = FIntVector::ZeroValue;
-				CopyInfo.DestPosition = FIntVector(Box.Min.X, Box.Min.Y, 0);
-				CopyInfo.NumSlices = 1; // 1 for simple texture, 6 for cubemap
-				CopyInfo.NumMips = 1;
+				int32 SizeX = SourceTexture->GetSizeX();
+				int32 SizeY = SourceTexture->GetSizeY();
 
-				RHICmdList.CopyTexture(
-					SourceTexture->Resource->TextureRHI,
-					DestinationTexture->Resource->TextureRHI, CopyInfo);
+				FResolveRect SrcRect(0, 0, SizeX, SizeY);
+				FResolveRect DestRect(Box.Min.X, Box.Min.Y, Box.Min.X + SizeX, Box.Min.Y + SizeY);
+
+				FResolveParams ResolveParams(
+					SrcRect,
+					CubeFace_PosX,
+					0,
+					0,
+					0,
+					DestRect
+				);
+
+				RHICmdList.CopyToResolveTarget(SourceTexture->Resource->TextureRHI, DestinationTexture->Resource->TextureRHI, ResolveParams);
+				/*
+				FOpenGLDynamicRHI::RHICopyToResolveTarget这个函数有点问题，他仅支持同位置的拷贝，因此需要修改源码。
+				修改：FOpenGL::CopyImageSubData这个函数调用时，GLint DstX, GLint DstY要传对，源码里传的是SrcX和SrcY。
+				*/
 			});
 		}
 
