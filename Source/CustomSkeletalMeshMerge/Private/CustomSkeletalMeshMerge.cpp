@@ -253,6 +253,8 @@ namespace
 		UTexture2D* DestinationTexture = UTexture2D::CreateTransient(Size.X, Size.Y, FirstTexture->GetPixelFormat());
 		check(DestinationTexture);
 
+		DestinationTexture->SRGB = bNormal ? 0 : 1;
+
 		DestinationTexture->UpdateResource();
 
 		for (int32 i = 0; i < Textures->Num(); i++)
