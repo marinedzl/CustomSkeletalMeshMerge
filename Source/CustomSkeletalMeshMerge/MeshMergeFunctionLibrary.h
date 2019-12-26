@@ -1,11 +1,12 @@
 #pragma once
+
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "UObject/NoExportTypes.h"
-#include "MeshMergeFunctionLibrary.generated.h"
+#include "CustomSkeletalMeshMergeBPLibrary.generated.h"
 
 USTRUCT(BlueprintType)
-struct FSkelMeshMergePart_BP
+struct FCustomSkelMeshMergePart_BP
 {
 	GENERATED_BODY()
 
@@ -20,7 +21,7 @@ struct FSkelMeshMergePart_BP
 };
 
 USTRUCT(BlueprintType)
-struct TESTACTION_API FSkelMeshMergeSectionMapping_BP
+struct  FCustomSkelMeshMergeSectionMapping_BP
 {
 	GENERATED_BODY()
 
@@ -33,11 +34,11 @@ struct TESTACTION_API FSkelMeshMergeSectionMapping_BP
 * Struct containing all parameters used to perform a Skeletal Mesh merge.
 */
 USTRUCT(BlueprintType)
-struct TESTACTION_API FSkeletalMeshMergeParams
+struct  FCustomSkeletalMeshMergeParams
 {
 	GENERATED_BODY()
 
-	FSkeletalMeshMergeParams()
+	FCustomSkeletalMeshMergeParams()
 	{
 		StripTopLODS = 0;
 		bNeedsCpuAccess = false;
@@ -47,11 +48,11 @@ struct TESTACTION_API FSkeletalMeshMergeParams
 
 	// An optional array to map sections from the source meshes to merged section entries
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	TArray<FSkelMeshMergeSectionMapping_BP> MeshSectionMappings;
+	TArray<FCustomSkelMeshMergeSectionMapping_BP> MeshSectionMappings;
 
 	// The list of skeletal meshes to merge.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	TArray<FSkelMeshMergePart_BP> MeshesToMerge;
+	TArray<FCustomSkelMeshMergePart_BP> MeshesToMerge;
 
 	// The number of high LODs to remove from input meshes
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -77,7 +78,7 @@ struct TESTACTION_API FSkeletalMeshMergeParams
 };
 
 UCLASS()
-class TESTACTION_API UMeshMergeFunctionLibrary : public UBlueprintFunctionLibrary
+class UCustomSkeletalMeshMergeBPLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 public:
@@ -86,5 +87,5 @@ public:
 	* @return The merged mesh (will be invalid if the merge failed).
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Mesh Merge", meta = (UnsafeDuringActorConstruction = "true"))
-	static class USkeletalMesh* MergeMeshes(const FSkeletalMeshMergeParams& Params);
+	static class USkeletalMesh* MergeMeshes(const FCustomSkeletalMeshMergeParams& Params);
 };
