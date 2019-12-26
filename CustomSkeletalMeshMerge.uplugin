@@ -17,7 +17,7 @@
 		{
 			"Name": "CustomSkeletalMeshMerge",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PreLoadingScreen"
 		}
 	]
 }

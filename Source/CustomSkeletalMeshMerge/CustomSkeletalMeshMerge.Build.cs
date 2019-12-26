@@ -27,7 +27,9 @@ public class CustomSkeletalMeshMerge : ModuleRules
 			{
 				"Core",
 				// ... add other public dependencies that you statically link with here ...
-			}
+                "RenderCore",
+                "RHI",
+            }
 			);
 			
 		
@@ -39,8 +41,6 @@ public class CustomSkeletalMeshMerge : ModuleRules
 				"Slate",
 				"SlateCore",
 				// ... add private dependencies that you statically link with here ...	
-                "RenderCore",
-                "RHI",
             }
 			);
 		
