@@ -1,4 +1,4 @@
-// Copyright 1998-2019 Epic Games, Inc. All Rights Reserved.
+// Some copyright should be here...
 
 using UnrealBuildTool;
 
@@ -39,7 +39,9 @@ public class CustomSkeletalMeshMerge : ModuleRules
 				"Slate",
 				"SlateCore",
 				// ... add private dependencies that you statically link with here ...	
-			}
+                "RenderCore",
+                "RHI",
+            }
 			);
 		
 		
