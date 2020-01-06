@@ -86,6 +86,7 @@ public:
 	* Merges the given meshes into a single mesh.
 	* @return The merged mesh (will be invalid if the merge failed).
 	*/
-	UFUNCTION(BlueprintCallable, Category = "Mesh Merge", meta = (UnsafeDuringActorConstruction = "true"))
+	//UFUNCTION(BlueprintCallable, Category = "Mesh Merge", meta = (UnsafeDuringActorConstruction = "true"))
+	UFUNCTION(BlueprintCallable, Category = "Mesh Merge")
 	static class USkeletalMesh* MergeMeshes(const FCustomSkeletalMeshMergeParams& Params);
 };
