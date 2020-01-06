@@ -428,6 +428,44 @@ void FCustomSkeletalMeshMerge::MergeSkeleton(const TArray<FRefPoseOverride>* Ref
 	MergeMesh->CalculateInvRefMatrices();
 }
 
+namespace
+{
+	TArray<FTransform> GetComponentSpaceTransforms(const FReferenceSkeleton& RefSkeleton)
+	{
+		TArray<FTransform> ComponentSpaceTransforms;
+
+		ComponentSpaceTransforms.AddUninitialized(RefSkeleton.GetRawBoneNum());
+
+		auto& LocalTransform = RefSkeleton.GetRawRefBonePose();
+
+		check(LocalTransform.Num() == ComponentSpaceTransforms.Num());
+
+		const FTransform* LocalTransformsData = LocalTransform.GetData();
+		FTransform* ComponentSpaceData = ComponentSpaceTransforms.GetData();
+
+		ComponentSpaceTransforms[0] = LocalTransform[0];
+
+		for (int32 BoneIndex = 1; BoneIndex < LocalTransform.Num(); BoneIndex++)
+		{
+			// For all bones below the root, final component-space transform is relative transform * component-space transform of parent.
+			const int32 ParentIndex = RefSkeleton.GetParentIndex(BoneIndex);
+			FTransform* ParentSpaceBase = ComponentSpaceData + ParentIndex;
+			FPlatformMisc::Prefetch(ParentSpaceBase);
+
+			FTransform* SpaceBase = ComponentSpaceData + BoneIndex;
+
+			FTransform::Multiply(SpaceBase, LocalTransformsData + BoneIndex, ParentSpaceBase);
+
+			SpaceBase->NormalizeRotation();
+
+			checkSlow(SpaceBase->IsRotationNormalized());
+			checkSlow(!SpaceBase->ContainsNaN());
+		}
+
+		return ComponentSpaceTransforms;
+	}
+}
+
 bool FCustomSkeletalMeshMerge::FinalizeMesh()
 {
 	bool Result = true;
@@ -445,6 +483,8 @@ bool FCustomSkeletalMeshMerge::FinalizeMesh()
 	ReleaseResources(MaxNumLODs);
 
 	// Create a mapping from each input mesh bone to bones in the merged mesh.
+
+	TArray<FTransform> ComponentSpaceTransforms = GetComponentSpaceTransforms(NewRefSkeleton);
 
 	SrcMeshInfo.Empty();
 	SrcMeshInfo.AddZeroed(SrcMeshList.Num());
@@ -468,6 +508,18 @@ bool FCustomSkeletalMeshMerge::FinalizeMesh()
 			FName AttachedBoneName = SrcMeshAttachedBoneNameList[MeshIdx];
 			int32 AttachedBoneIndex = NewRefSkeleton.FindBoneIndex(AttachedBoneName);
 
+			// transform vertices
+			if (AttachedBoneIndex != INDEX_NONE)
+			{
+				TArray<FTransform> SrcBones = GetComponentSpaceTransforms(SrcMesh->RefSkeleton);
+				FTransform SrcInvTransform = FTransform::Identity;
+				if (SrcBones.Num() > 0)
+					SrcInvTransform = SrcBones[0].Inverse();
+				FTransform BindingTransform = ComponentSpaceTransforms[AttachedBoneIndex];
+				VerticesTransformList[MeshIdx] = VerticesTransformList[MeshIdx] * SrcInvTransform * BindingTransform;
+			}
+
+			// remap skin
 			for (int32 i = 0; i < SrcMesh->RefSkeleton.GetRawBoneNum(); i++)
 			{
 				int32 DestBoneIndex = AttachedBoneIndex;
